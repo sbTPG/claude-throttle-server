@@ -9,9 +9,9 @@ app.use(express.json());
 // ============================================
 const limiter = new Bottleneck({
   maxConcurrent: 1,
-  minTime: 15000,    // 15 seconds between contacts
-  reservoir: 4,      // 4 per minute
-  reservoirRefreshAmount: 4,
+  minTime: 8000,    // 8 seconds between contacts
+  reservoir: 8,      // 8 per minute
+  reservoirRefreshAmount: 8,
   reservoirRefreshInterval: 60 * 1000
 });
 
