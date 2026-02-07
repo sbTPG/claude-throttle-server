@@ -258,9 +258,9 @@ async function writeResults(contactId, { subject, bodyText }) {
     `https://api.hubapi.com/crm/v3/objects/contacts/${contactId}`,
     {
       properties: {
-        [`claude_ai_generated_subject_${SEQUENCE_STEP}`]: subject,
-        [`claude_ai_generated_email_${SEQUENCE_STEP}`]: bodyHtml,
-        [`claude_ai_generated_email_text_${SEQUENCE_STEP}`]: bodyText
+        'prospect_email_1_subject_line': subject,
+        'prospect_email_1': bodyHtml,
+        'claude_ai_generated_email_text_1': bodyText
       }
     },
     {
