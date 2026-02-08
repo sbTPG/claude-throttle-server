@@ -9,7 +9,7 @@ app.use(express.json());
 // =============================
 const SEQUENCE_STEP = 1; // Change per deployment
 const MAX_SUBJECT_RETRIES = 3;
-const PROCESS_INTERVAL_MS = 1500; // 40 contacts per minute
+const PROCESS_INTERVAL_MS = 6000; // 10 contacts per minute
 
 const HUBSPOT_TOKEN = process.env.HUBSPOT_TOKEN;
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
