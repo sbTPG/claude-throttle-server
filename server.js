@@ -1,47 +1,3 @@
-const express = require('express');
-const axios = require('axios');
-
-const app = express();
-app.use(express.json());
-
-// =============================
-// CONFIG
-// =============================
-const SEQUENCE_STEP = 1; // Change per deployment
-const MAX_SUBJECT_RETRIES = 3;
-const PROCESS_INTERVAL_MS = 6000; // 10 contacts per minute
-
-const HUBSPOT_TOKEN = process.env.HUBSPOT_TOKEN;
-const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
-
-// =============================
-// SIMPLE QUEUE
-// =============================
-let queue = [];
-let processing = false;
-
-// =============================
-// HEALTH CHECK
-// =============================
-app.get("/", (req, res) => {
-  res.json({ 
-    status: "ok",
-    queueLength: queue.length,
-    processing: processing
-  });
-});
-
-// =============================
-// ENQUEUE FROM HUBSPOT
-// =============================
-app.post("/enqueue", (req, res) => {
-  queue.push({ ...req.body, retries: 0 });
-  res.status(200).json({ 
-    status: "queued",
-    queuePosition: queue.length
-  });
-});
-
 // =============================
 // WORKER LOOP
 // =============================
@@ -56,21 +12,26 @@ setInterval(async () => {
 
     const result = await runClaude(job);
 
-    await writeResults(job.contactId, result);
+    await writeResults(job.contactId, result, job.sequenceStep || 1);
 
     await updateStatus(job.contactId, "SENT");
     
-    console.log(`✅ Completed: ${job.contactId}`);
+    console.log(`✅ Completed: ${job.contactId} - Step ${job.sequenceStep}`);
   } catch (err) {
     console.error(`❌ Error for ${job.contactId}:`, err.message);
     
-    job.retries++;
-
-    if (job.retries <= 2) {
-      await updateStatus(job.contactId, "RETRY_PENDING");
+    if (err.response?.status === 429) {
+      console.log(`⏳ Rate limited, requeuing ${job.contactId}`);
       queue.push(job);
     } else {
-      await updateStatus(job.contactId, "FAILED");
+      job.retries++;
+
+      if (job.retries <= 2) {
+        await updateStatus(job.contactId, "RETRY_PENDING");
+        queue.push(job);
+      } else {
+        await updateStatus(job.contactId, "FAILED");
+      }
     }
   } finally {
     processing = false;
@@ -81,6 +42,8 @@ setInterval(async () => {
 // CLAUDE LOGIC
 // =============================
 async function runClaude(job) {
+  const SEQUENCE_STEP = job.sequenceStep || 1; // Get from job data
+  
   const safe = v => (v ?? "").toString().trim();
 
   const {
@@ -102,12 +65,10 @@ async function runClaude(job) {
       ? "Buyer intent signals are active for this account."
       : "Buyer intent signals are not active or unavailable.";
 
+  // THIS IS THE KEY PART - it reads ALL prior emails
   let priorEmailsText = [];
   for (let i = 1; i < SEQUENCE_STEP; i++) {
-    const field =
-      i === 1
-        ? job.claude_ai_generated_email_text
-        : job[`claude_ai_generated_email_text_${i}`];
+    const field = job[`claude_ai_generated_email_text_${i}`];
     if (field) priorEmailsText.push(`EMAIL ${i}:\n${field}`);
   }
 
@@ -115,6 +76,8 @@ async function runClaude(job) {
     ? priorEmailsText.join("\n\n---\n\n")
     : "N/A";
 
+  // ... rest of your Claude prompt stays the same
+  
   const userContent = `You are Jeff Pedowitz at The Pedowitz Group writing EMAIL ${SEQUENCE_STEP} in a long-form personalized outbound nurture (10 total touches).
 
 PROSPECT DATA:
@@ -247,7 +210,7 @@ Body:
 // =============================
 // HUBSPOT WRITE-BACK
 // =============================
-async function writeResults(contactId, { subject, bodyText }) {
+async function writeResults(contactId, { subject, bodyText }, sequenceStep = 1) {
   const bodyHtml = bodyText
     .replace(/\r\n/g, "\n")
     .split(/\n{2,}/)
@@ -258,9 +221,9 @@ async function writeResults(contactId, { subject, bodyText }) {
     `https://api.hubapi.com/crm/v3/objects/contacts/${contactId}`,
     {
       properties: {
-        'prospect_email_1_subject_line': subject,
-        'prospect_email_1': bodyHtml,
-        'claude_ai_generated_email_text_1': bodyText
+        [`prospect_email_${sequenceStep}_subject_line`]: subject,
+        [`prospect_email_${sequenceStep}`]: bodyHtml,
+        [`claude_ai_generated_email_text_${sequenceStep}`]: bodyText
       }
     },
     {
@@ -272,27 +235,3 @@ async function writeResults(contactId, { subject, bodyText }) {
     }
   );
 }
-
-async function updateStatus(contactId, status) {
-  try {
-    await axios.patch(
-      `https://api.hubapi.com/crm/v3/objects/contacts/${contactId}`,
-      { properties: { ai_email_step_status: status } },
-      {
-        headers: {
-          Authorization: `Bearer ${HUBSPOT_TOKEN}`,
-          "Content-Type": "application/json"
-        },
-        timeout: 5000
-      }
-    );
-  } catch (err) {
-    console.error(`Status update failed for ${contactId}:`, err.message);
-  }
-}
-
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log(`🚀 Render worker running on port ${PORT}`);
-  console.log(`📊 Processing: ${Math.floor(60000 / PROCESS_INTERVAL_MS)} contacts per minute`);
-});
