@@ -1,3 +1,46 @@
+const express = require('express');
+const axios = require('axios');
+
+const app = express();
+app.use(express.json());
+
+// =============================
+// CONFIG
+// =============================
+const MAX_SUBJECT_RETRIES = 3;
+const PROCESS_INTERVAL_MS = 6000; // 10 contacts per minute
+
+const HUBSPOT_TOKEN = process.env.HUBSPOT_TOKEN;
+const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
+
+// =============================
+// SIMPLE QUEUE
+// =============================
+let queue = [];
+let processing = false;
+
+// =============================
+// HEALTH CHECK
+// =============================
+app.get("/", (req, res) => {
+  res.json({ 
+    status: "ok",
+    queueLength: queue.length,
+    processing: processing
+  });
+});
+
+// =============================
+// ENQUEUE FROM HUBSPOT
+// =============================
+app.post("/enqueue", (req, res) => {
+  queue.push({ ...req.body, retries: 0 });
+  res.status(200).json({ 
+    status: "queued",
+    queuePosition: queue.length
+  });
+});
+
 // =============================
 // WORKER LOOP
 // =============================
@@ -235,3 +278,32 @@ async function writeResults(contactId, { subject, bodyText }, sequenceStep = 1) 
     }
   );
 }
+// =============================
+// STATUS UPDATE
+// =============================
+async function updateStatus(contactId, status) {
+  try {
+    await axios.patch(
+      `https://api.hubapi.com/crm/v3/objects/contacts/${contactId}`,
+      { properties: { ai_email_step_status: status } },
+      {
+        headers: {
+          Authorization: `Bearer ${HUBSPOT_TOKEN}`,
+          "Content-Type": "application/json"
+        },
+        timeout: 5000
+      }
+    );
+  } catch (err) {
+    console.error(`Status update failed for ${contactId}:`, err.message);
+  }
+}
+
+// =============================
+// SERVER STARTUP
+// =============================
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+  console.log(`🚀 Render worker running on port ${PORT}`);
+  console.log(`📊 Processing: ${Math.floor(60000 / PROCESS_INTERVAL_MS)} contacts per minute`);
+});
