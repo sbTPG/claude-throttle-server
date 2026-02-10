@@ -95,7 +95,7 @@ async function runClaude(job) {
     jobtitle = '',
     industry = '',
     numemployees = '',
-    anualrevenue = '',
+    annualrevenue = '',
     hs_linkedin_url = '',
     website = '',
     hs_intent_signals_enabled = '',
@@ -129,7 +129,7 @@ PROSPECT DATA:
 - Company: ${company}
 - Industry: ${industry}
 - Employee Count: ${numemployees}
-- Annual Revenue: ${anualrevenue}
+- Annual Revenue: ${annualrevenue}
 - LinkedIn: ${hs_linkedin_url}
 - Website: ${website}
 - Intent Signals: ${IntentContext}
