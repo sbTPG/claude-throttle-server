@@ -82,10 +82,42 @@ setInterval(async () => {
 }, PROCESS_INTERVAL_MS);
 
 // =============================
+// HTML STRIPPER (NEW)
+// =============================
+function stripHtml(html) {
+  return html
+    .replace(/<script[\s\S]*?<\/script>/gi, '')
+    .replace(/<style[\s\S]*?<\/style>/gi, '')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+// =============================
+// TITLE EXTRACTION (NEW)
+// =============================
+async function extractTitles(url) {
+  try {
+    const res = await axios.get(url, { 
+      timeout: 5000,
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+      }
+    });
+    const text = stripHtml(res.data);
+    const matches = [...text.matchAll(/(.{25,120})\s+(20\d{2})/g)];
+    return matches.map(m => m[1].trim()).slice(0, 2);
+  } catch (err) {
+    console.log(`⚠️ Could not fetch ${url}: ${err.message}`);
+    return [];
+  }
+}
+
+// =============================
 // CLAUDE LOGIC
 // =============================
 async function runClaude(job) {
-  const SEQUENCE_STEP = job.sequenceStep || 1; // Get from job data
+  const SEQUENCE_STEP = job.sequenceStep || 1;
   
   const safe = v => (v ?? "").toString().trim();
 
@@ -108,7 +140,7 @@ async function runClaude(job) {
       ? "Buyer intent signals are active for this account."
       : "Buyer intent signals are not active or unavailable.";
 
-  // THIS IS THE KEY PART - it reads ALL prior emails
+  // PRIOR EMAILS
   let priorEmailsText = [];
   for (let i = 1; i < SEQUENCE_STEP; i++) {
     const field = job[`claude_ai_generated_email_text_${i}`];
@@ -119,7 +151,44 @@ async function runClaude(job) {
     ? priorEmailsText.join("\n\n---\n\n")
     : "N/A";
 
-  // ... rest of your Claude prompt stays the same
+  // =============================
+  // NEWS & BLOG EXTRACTION (NEW)
+  // =============================
+  let companyNewsBlock = `
+COMPANY NEWS & AWARDS (VERIFIED):
+- None found
+`;
+
+  let companyContentBlock = `
+COMPANY BLOGS & PRESS (VERIFIED):
+- None found
+`;
+
+  if (website) {
+    try {
+      // Try to extract from /news page
+      const pressTitles = await extractTitles(`${website}/news`);
+      
+      if (pressTitles.length) {
+        companyNewsBlock = `
+COMPANY NEWS & AWARDS (VERIFIED):
+${pressTitles.map(t => `- ${t}`).join('\n')}
+`;
+      } else {
+        // If no news, try /blog
+        const blogTitles = await extractTitles(`${website}/blog`);
+        if (blogTitles.length) {
+          companyContentBlock = `
+COMPANY BLOGS & PRESS (VERIFIED):
+${blogTitles.map(t => `- ${t}`).join('\n')}
+`;
+        }
+      }
+    } catch (err) {
+      console.log(`⚠️ News/blog extraction failed for ${company}: ${err.message}`);
+    }
+  }
+  // =============================
   
   const userContent = `You are Jeff Pedowitz at The Pedowitz Group writing EMAIL ${SEQUENCE_STEP} in a long-form personalized outbound nurture (10 total touches).
 
@@ -136,6 +205,9 @@ PROSPECT DATA:
 - Web Technologies: ${web_technologies || "Not listed"}
 - Company Description: ${description || "Not provided"}
 
+${companyNewsBlock}
+${companyContentBlock}
+
 PRIOR EMAILS — BACKGROUND CONTEXT ONLY:
 Everything below has ALREADY been sent to this contact.
 ${priorEmailsBlock}
@@ -150,6 +222,14 @@ SUBJECT LINE NON-REPETITION REQUIREMENTS (HARD RULE):
 - The subject line MUST be entirely unique and clearly distinct from all prior subject lines.
 - You MUST NOT reuse, closely paraphrase, or slightly modify previous subject lines.
 - If the subject line is semantically or structurally similar to any prior subject, the response is INVALID.
+
+NEWS & AWARDS USAGE RULE (OPTIONAL):
+- If the "COMPANY NEWS & AWARDS (VERIFIED)" section contains items:
+  - Consider naturally referencing ONE of them in the email if relevant to your message.
+
+BLOG / PRESS USAGE RULE (OPTIONAL):
+- If the "COMPANY BLOGS & PRESS (VERIFIED)" section contains items:
+  - Consider naturally referencing ONE by title if relevant to your message.
 
 WRITE EMAIL ${SEQUENCE_STEP} WITH THESE REQUIREMENTS:
 
@@ -278,6 +358,7 @@ async function writeResults(contactId, { subject, bodyText }, sequenceStep = 1) 
     }
   );
 }
+
 // =============================
 // STATUS UPDATE
 // =============================
