@@ -82,7 +82,29 @@ setInterval(async () => {
 }, PROCESS_INTERVAL_MS);
 
 // =============================
-// HTML STRIPPER (NEW)
+// URL NORMALIZER (NEW)
+// Fixes the "Invalid URL" errors by ensuring all URLs have a protocol
+// =============================
+function normalizeUrl(rawUrl) {
+  if (!rawUrl) return null;
+  let url = rawUrl.trim();
+  // Remove any accidental trailing slashes for consistent path building
+  url = url.replace(/\/+$/, '');
+  // Add protocol if missing
+  if (!/^https?:\/\//i.test(url)) {
+    url = 'https://' + url;
+  }
+  // Validate by parsing
+  try {
+    new URL(url);
+    return url;
+  } catch {
+    return null;
+  }
+}
+
+// =============================
+// HTML STRIPPER
 // =============================
 function stripHtml(html) {
   return html
@@ -94,23 +116,98 @@ function stripHtml(html) {
 }
 
 // =============================
-// TITLE EXTRACTION (NEW)
+// TITLE EXTRACTION (IMPROVED)
+// - Validates URL before fetching
+// - Extracts <title> and <h1>/<h2> tags directly (more reliable than regex on stripped text)
+// - Falls back to year-adjacent text pattern
 // =============================
 async function extractTitles(url) {
-  try {
-    const res = await axios.get(url, { 
-      timeout: 5000,
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-      }
-    });
-    const text = stripHtml(res.data);
-    const matches = [...text.matchAll(/(.{25,120})\s+(20\d{2})/g)];
-    return matches.map(m => m[1].trim()).slice(0, 2);
-  } catch (err) {
-    console.log(`⚠️ Could not fetch ${url}: ${err.message}`);
+  const normalized = normalizeUrl(url);
+  if (!normalized) {
+    console.log(`⚠️ Skipping invalid URL: ${url}`);
     return [];
   }
+
+  try {
+    const res = await axios.get(normalized, { 
+      timeout: 7000,
+      maxContentLength: 500000, // 500KB cap to avoid giant pages
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml',
+        'Accept-Language': 'en-US,en;q=0.9'
+      }
+    });
+
+    const html = res.data || '';
+
+    // Strategy 1: Extract <h1> and <h2> headline text (most reliable for news/blog pages)
+    const headlineMatches = [];
+    const headingRegex = /<h[12][^>]*>([\s\S]*?)<\/h[12]>/gi;
+    let match;
+    while ((match = headingRegex.exec(html)) !== null) {
+      const text = match[1].replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim();
+      if (text.length >= 20 && text.length <= 160) {
+        headlineMatches.push(text);
+      }
+    }
+    if (headlineMatches.length >= 2) {
+      return headlineMatches.slice(0, 3);
+    }
+
+    // Strategy 2: Fallback — year-adjacent text on stripped page
+    const text = stripHtml(html);
+    const fallbackMatches = [...text.matchAll(/(.{25,120})\s+(20\d{2})/g)];
+    return fallbackMatches.map(m => m[1].trim()).slice(0, 3);
+
+  } catch (err) {
+    // Provide a cleaner, more informative warning
+    const reason = err.code === 'ECONNABORTED' ? 'timeout' 
+      : err.response ? `HTTP ${err.response.status}` 
+      : err.message;
+    console.log(`⚠️ Could not fetch ${normalized}: ${reason}`);
+    return [];
+  }
+}
+
+// =============================
+// COMPANY RESEARCH (IMPROVED)
+// Tries multiple common paths and returns the best result
+// =============================
+async function getCompanyContent(website) {
+  const baseUrl = normalizeUrl(website);
+  if (!baseUrl) return { newsBlock: null, blogBlock: null };
+
+  // Try these paths in order of priority
+  const newsPaths = ['/news', '/press', '/newsroom', '/media', '/press-releases'];
+  const blogPaths = ['/blog', '/insights', '/resources', '/articles', '/thought-leadership'];
+
+  let newsBlock = null;
+  let blogBlock = null;
+
+  // Check news/press paths first
+  for (const path of newsPaths) {
+    const titles = await extractTitles(`${baseUrl}${path}`);
+    if (titles.length >= 1) {
+      newsBlock = `COMPANY NEWS & AWARDS (VERIFIED from ${baseUrl}${path}):\n` 
+        + titles.map(t => `- ${t}`).join('\n');
+      console.log(`📰 Found news at ${baseUrl}${path}`);
+      break;
+    }
+  }
+
+  // Check blog/insights paths
+  for (const path of blogPaths) {
+    const titles = await extractTitles(`${baseUrl}${path}`);
+    if (titles.length >= 1) {
+      blogBlock = `COMPANY BLOGS & PRESS (VERIFIED from ${baseUrl}${path}):\n`
+        + titles.map(t => `- ${t}`).join('\n');
+      console.log(`📝 Found blog at ${baseUrl}${path}`);
+      break;
+    }
+  }
+
+  return { newsBlock, blogBlock };
 }
 
 // =============================
@@ -152,40 +249,21 @@ async function runClaude(job) {
     : "N/A";
 
   // =============================
-  // NEWS & BLOG EXTRACTION (NEW)
+  // NEWS & BLOG EXTRACTION (IMPROVED)
   // =============================
-  let companyNewsBlock = `
-COMPANY NEWS & AWARDS (VERIFIED):
-- None found
-`;
+  const defaultNewsBlock = `COMPANY NEWS & AWARDS (VERIFIED):\n- None found`;
+  const defaultBlogBlock = `COMPANY BLOGS & PRESS (VERIFIED):\n- None found`;
 
-  let companyContentBlock = `
-COMPANY BLOGS & PRESS (VERIFIED):
-- None found
-`;
+  let companyNewsBlock = defaultNewsBlock;
+  let companyContentBlock = defaultBlogBlock;
 
   if (website) {
     try {
-      // Try to extract from /news page
-      const pressTitles = await extractTitles(`${website}/news`);
-      
-      if (pressTitles.length) {
-        companyNewsBlock = `
-COMPANY NEWS & AWARDS (VERIFIED):
-${pressTitles.map(t => `- ${t}`).join('\n')}
-`;
-      } else {
-        // If no news, try /blog
-        const blogTitles = await extractTitles(`${website}/blog`);
-        if (blogTitles.length) {
-          companyContentBlock = `
-COMPANY BLOGS & PRESS (VERIFIED):
-${blogTitles.map(t => `- ${t}`).join('\n')}
-`;
-        }
-      }
+      const { newsBlock, blogBlock } = await getCompanyContent(website);
+      if (newsBlock) companyNewsBlock = newsBlock;
+      if (blogBlock) companyContentBlock = blogBlock;
     } catch (err) {
-      console.log(`⚠️ News/blog extraction failed for ${company}: ${err.message}`);
+      console.log(`⚠️ Content extraction failed for ${company}: ${err.message}`);
     }
   }
   // =============================
