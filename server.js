@@ -317,7 +317,7 @@ WRITE:
   "${firstname},"
 - One blank line after salutation.
 - Opening line MUST use a NEW rhetorical device not previously used.
-- Body length: 120–160 words.
+- Body length: 75–100 words (maximum 125 words).
 - Each paragraph separated by ONE blank line.
 - No bullets. No signature.
 - Return HTML-safe text.
