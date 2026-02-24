@@ -229,13 +229,66 @@ async function runClaude(job) {
     website = '',
     hs_intent_signals_enabled = '',
     web_technologies = '',
-    description = ''
+    description = '',
+    hs_analytics_last_url = '',
+    hs_analytics_num_page_views = ''
   } = job;
 
   const IntentContext =
     hs_intent_signals_enabled === "true"
       ? "Buyer intent signals are active for this account."
       : "Buyer intent signals are not active or unavailable.";
+
+  // =============================
+  // BEHAVIORAL SIGNALS ANALYSIS
+  // =============================
+  let behavioralContext = '';
+  const pageViews = parseInt(hs_analytics_num_page_views) || 0;
+  const lastUrl = hs_analytics_last_url ? hs_analytics_last_url.trim() : '';
+  
+  // Analyze page views
+  if (pageViews >= 10) {
+    behavioralContext += `High website engagement (${pageViews} pages viewed) - showing strong active interest. `;
+  } else if (pageViews >= 5) {
+    behavioralContext += `Moderate website engagement (${pageViews} pages) - exploring solutions. `;
+  } else if (pageViews >= 1) {
+    behavioralContext += `Initial website visit (${pageViews} pages) - early awareness stage. `;
+  } else {
+    behavioralContext += `No prior website visits detected. `;
+  }
+  
+  // Analyze last URL visited for topic interest
+  if (lastUrl) {
+    let topicInterest = '';
+    const url = lastUrl.toLowerCase();
+    
+    if (url.includes('/pricing')) {
+      topicInterest = 'Viewed pricing - evaluating investment';
+    } else if (url.includes('/demo') || url.includes('/get-started')) {
+      topicInterest = 'Visited demo/get-started page - high intent';
+    } else if (url.includes('/case-stud') || url.includes('/customer')) {
+      topicInterest = 'Reviewed case studies - seeking proof points';
+    } else if (url.includes('/integration') || url.includes('/connect')) {
+      topicInterest = 'Explored integrations - technical evaluation';
+    } else if (url.includes('/blog') || url.includes('/resource')) {
+      topicInterest = 'Consumed content - educational phase';
+    } else if (url.includes('/hubspot')) {
+      topicInterest = 'Specifically researched HubSpot solutions';
+    } else if (url.includes('/revenue') || url.includes('/marketing')) {
+      topicInterest = 'Focused on revenue marketing solutions';
+    } else {
+      // Extract page name from URL for generic insight
+      const pageName = lastUrl.split('/').filter(p => p).pop()?.replace(/-/g, ' ') || 'homepage';
+      topicInterest = `Last viewed: ${pageName}`;
+    }
+    
+    if (topicInterest) {
+      behavioralContext += topicInterest + '.';
+    }
+  }
+  
+  const BehavioralContext = behavioralContext.trim() || 'No behavioral data available.';
+  // =============================
 
   // PRIOR EMAILS
   let priorEmailsText = [];
@@ -283,6 +336,9 @@ PROSPECT DATA:
 - Web Technologies: ${web_technologies || "Not listed"}
 - Company Description: ${description || "Not provided"}
 
+BEHAVIORAL SIGNALS (WEBSITE ACTIVITY):
+${BehavioralContext}
+
 ${companyNewsBlock}
 ${companyContentBlock}
 
@@ -301,13 +357,15 @@ SUBJECT LINE NON-REPETITION REQUIREMENTS (HARD RULE):
 - You MUST NOT reuse, closely paraphrase, or slightly modify previous subject lines.
 - If the subject line is semantically or structurally similar to any prior subject, the response is INVALID.
 
-NEWS & AWARDS USAGE RULE (OPTIONAL):
+NEWS & AWARDS USAGE RULE (PRIORITIZED):
 - If the "COMPANY NEWS & AWARDS (VERIFIED)" section contains items:
-  - Consider naturally referencing ONE of them in the email if relevant to your message.
-
-BLOG / PRESS USAGE RULE (OPTIONAL):
+  - You MUST reference ONE of them in your opening personalization. This is your strongest hook.
+  - Reference it conversationally: "I saw you recently..." or "With [Company] rolling out..."
+  
+BLOG / PRESS USAGE RULE (PRIORITIZED):
 - If the "COMPANY BLOGS & PRESS (VERIFIED)" section contains items:
-  - Consider naturally referencing ONE by title if relevant to your message.
+  - You SHOULD reference ONE by topic/theme (not just title) to show you understand their content strategy.
+  - Example: "I noticed your recent piece on [topic]..." rather than quoting the exact headline.
 
 WRITE EMAIL ${SEQUENCE_STEP} WITH THESE REQUIREMENTS:
 
@@ -316,8 +374,8 @@ WRITE:
 - Start with a salutation on its own line:
   "${firstname},"
 - One blank line after salutation.
-- Opening line MUST use a NEW rhetorical device not previously used.
-- Body length: 75–100 words (maximum 125 words).
+- Opening line MUST be highly specific and personalized (not a rhetorical device). Lead with a concrete observation about the prospect's company, recent news, or specific situation.
+- Body length: 120–160 words.
 - Each paragraph separated by ONE blank line.
 - No bullets. No signature.
 - Return HTML-safe text.
@@ -331,13 +389,32 @@ MESSAGING STRATEGY:
   (examples: forecasting accuracy, RevOps governance, attribution trust, data hygiene, lifecycle alignment, scale readiness).
 
 PERSONALIZATION & 1:1 OUTREACH REQUIREMENTS (MANDATORY):
-- The email MUST read like a true 1:1 sales outreach, not a marketing broadcast.
-- Incorporate at least ONE specific, concrete reference to the prospect or their company using the research data provided.
-- If recent news exists in research:
-  - Acknowledge it naturally in 1–2 sentences.
-- If no clear news:
-  - Use role-specific and company-contextual personalization based on research findings.
-- Personalization should feel earned, subtle, and woven into the narrative — not bolted on as a separate paragraph.
+- The email MUST read like a personal note between two professionals, not a sales template.
+- OPENING REQUIREMENT: The first sentence after the greeting MUST contain highly specific, concrete personalization that could ONLY apply to this exact prospect. Examples:
+  * Reference a specific recent company announcement, product launch, or news item
+  * Mention a specific technology stack, tool, or platform they use
+  * Reference their industry challenges or recent company changes
+  * Connect to a specific blog post, article, or content they published
+  * Acknowledge their website activity naturally ("I noticed you recently visited our page on [topic]...")
+- BEHAVIORAL SIGNALS USAGE: If the prospect has website activity (page views, specific URLs visited), weave this into your opening naturally:
+  * High page views: Shows they're actively researching - acknowledge their diligence
+  * Specific URLs (pricing, demo, case studies): Reference what they were looking at
+  * Example: "I noticed you recently visited our page on getting started with revenue marketing, which tells me you're considering ways to enhance your marketing impact at [Company]."
+- CONVERSATIONAL TONE: Write as if you've been following their company and are genuinely interested. Use phrases like:
+  * "I noticed you recently..."
+  * "With [Company] doing X..."
+  * "Given your focus on..."
+  * "I saw that [Company]..."
+- GOOD EXAMPLES:
+  * "With Adobe rolling out free Photoshop, Acrobat, and Firefly for students—and doubling down on AI across the board—it's an exciting (and busy) time to be part of the Magento team."
+  * "I noticed you recently visited our page on getting started with revenue marketing, which tells me you're considering ways to enhance your marketing impact at Hunter Industries."
+- BAD EXAMPLES (NEVER DO THIS):
+  * "As a leader in the [industry] space..." (too generic)
+  * "Many companies like yours are facing..." (not specific)
+  * "In today's competitive landscape..." (templated language)
+- SPECIFICITY TEST: If you could swap the company name and send this email to 5 other companies in the same industry, the personalization has FAILED.
+- NO GENERIC STATEMENTS: Avoid broad industry observations that apply to everyone. Every sentence should tie back to THIS specific prospect or company.
+- NATURAL INTEGRATION: Personalization should feel like casual observation, not forced research. Don't announce that you "did your homework."
 - Emails that feel templated, generic, or broadly applicable to multiple companies are INVALID.
 
 LINKED CONTENT REQUIREMENTS:
@@ -376,7 +453,7 @@ Body:
         model: "claude-sonnet-4-20250514",
         max_tokens: 1500,
         temperature: 0.7,
-        system: 'You write long-sequence B2B nurture emails with strict non-repetition and genuine 1:1 personalization.',
+        system: 'You write highly personalized, conversational B2B sales emails that sound like personal notes between professionals. Every email must open with specific, concrete observations about the recipient\'s company that prove you\'ve done research. Avoid any templated language or generic industry observations.',
         messages: [{ role: "user", content: userContent }]
       },
       {
